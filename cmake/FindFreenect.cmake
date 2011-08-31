@@ -5,7 +5,8 @@ find_path(Freenect_INCLUDE_DIR
 
 # Finally the library itself
 find_library(Freenect_LIBRARY
-  NAMES freenect
+  NAMES freenect libfreenect
+  PATHS /usr/local/lib64
 )
 
 set(Freenect_INCLUDE_DIR Freenect_INCLUDE_DIR ${Freenect_INCLUDE_DIR}/libfreenect)

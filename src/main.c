@@ -40,6 +40,7 @@ static int is_recording();
 static void movement_event(void* socket, int delta);
 static void brightness_event(void* socket, int new_brightness);
 static void record_frame(void *data, int size, FILE *stream);
+void write_bmp(const char *filename, int width, int height, char *rgb);
 static void switch_to_ir();
 static void switch_to_rgb();
 
@@ -50,6 +51,7 @@ enum command_types {
   , CMD_SET_CUTOFF
   , CMD_GET_CUTOFF
   , CMD_GET_VIDEO_MODE
+  , CMD_WRITE_BMP
   , CMD_NOPARSE
 };
 
@@ -86,6 +88,8 @@ int parse_msg_type(char* data, char** rest) {
     type = CMD_GET_CUTOFF;
   else if (strcmp(data, "get_video_mode") == 0)
     type = CMD_GET_VIDEO_MODE;
+  else if (strcmp(data, "write_bmp") == 0)
+    type = CMD_WRITE_BMP;
 
   *space_pos = ' ';
   *rest = space_pos + 1;
@@ -134,6 +138,9 @@ void handle_msg(zmq_msg_t *msg) {
       sprintf(tmp, "get_video_mode %s", mode);
       publish_msg(zmq_cmd_sock, tmp);
       ok = 1;
+      break;
+    case CMD_WRITE_BMP:
+      write_bmp("snapshot.bmp", 640, 480, last_frame);
       break;
     case CMD_NOPARSE:
       break;
@@ -325,6 +332,101 @@ static void init(int use_ffmpeg) {
 	freenect_stop_video(dev);
 	freenect_close_device(dev);
 	freenect_shutdown(ctx);
+}
+
+struct BMPHeader
+{
+    char bfType[2];       /* "BM" */
+    int bfSize;           /* Size of file in bytes */
+    int bfReserved;       /* set to 0 */
+    int bfOffBits;        /* Byte offset to actual bitmap data (= 54) */
+    int biSize;           /* Size of BITMAPINFOHEADER, in bytes (= 40) */
+    int biWidth;          /* Width of image, in pixels */
+    int biHeight;         /* Height of images, in pixels */
+    short biPlanes;       /* Number of planes in target device (set to 1) */
+    short biBitCount;     /* Bits per pixel (24 in this case) */
+    int biCompression;    /* Type of compression (0 if no compression) */
+    int biSizeImage;      /* Image size, in bytes (0 if no compression) */
+    int biXPelsPerMeter;  /* Resolution in pixels/meter of display device */
+    int biYPelsPerMeter;  /* Resolution in pixels/meter of display device */
+    int biClrUsed;        /* Number of colors in the color table (if 0, use
+                             maximum allowed by biBitCount) */
+    int biClrImportant;   /* Number of important colors.  If 0, all colors
+                             are important */
+};
+
+
+void
+write_bmp(const char *filename, int width, int height, char *rgb)
+{
+    int i, j, ipos;
+    int bytesPerLine;
+    unsigned char *line;
+
+    FILE *file;
+    struct BMPHeader bmph;
+
+    /* The length of each line must be a multiple of 4 bytes */
+
+    bytesPerLine = (3 * (width + 1) / 4) * 4;
+
+    strcpy(bmph.bfType, "BM");
+
+    bmph.bfOffBits = 54;
+    bmph.bfSize = bmph.bfOffBits + bytesPerLine * height;
+    bmph.bfReserved = 0;
+    bmph.biSize = 40;
+    bmph.biWidth = width;
+    bmph.biHeight = height;
+    bmph.biPlanes = 1;
+    bmph.biBitCount = 24;
+    bmph.biCompression = 0;
+    bmph.biSizeImage = bytesPerLine * height;
+    bmph.biXPelsPerMeter = 0;
+    bmph.biYPelsPerMeter = 0;
+    bmph.biClrUsed = 0;
+    bmph.biClrImportant = 0;
+
+    file = fopen (filename, "wb");
+    if (file == NULL) return;
+
+    fwrite(&bmph.bfType, 2, 1, file);
+    fwrite(&bmph.bfSize, 4, 1, file);
+    fwrite(&bmph.bfReserved, 4, 1, file);
+    fwrite(&bmph.bfOffBits, 4, 1, file);
+    fwrite(&bmph.biSize, 4, 1, file);
+    fwrite(&bmph.biWidth, 4, 1, file);
+    fwrite(&bmph.biHeight, 4, 1, file);
+    fwrite(&bmph.biPlanes, 2, 1, file);
+    fwrite(&bmph.biBitCount, 2, 1, file);
+    fwrite(&bmph.biCompression, 4, 1, file);
+    fwrite(&bmph.biSizeImage, 4, 1, file);
+    fwrite(&bmph.biXPelsPerMeter, 4, 1, file);
+    fwrite(&bmph.biYPelsPerMeter, 4, 1, file);
+    fwrite(&bmph.biClrUsed, 4, 1, file);
+    fwrite(&bmph.biClrImportant, 4, 1, file);
+
+    line = malloc(bytesPerLine);
+    if (line == NULL)
+    {
+        fprintf(stderr, "Can't allocate memory for BMP file.\n");
+        return;
+    }
+
+    for (i = height - 1; i >= 0; i--)
+    {
+        for (j = 0; j < width; j++)
+        {
+            ipos = 3 * (width * i + j);
+            line[3*j] = rgb[ipos + 2];
+            line[3*j+1] = rgb[ipos + 1];
+            line[3*j+2] = rgb[ipos];
+        }
+        fwrite(line, bytesPerLine, 1, file);
+    }
+
+    free(line);
+    fclose(file);
 }
 
 
